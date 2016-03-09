@@ -1,100 +1,97 @@
-﻿using System;
-using System.IO;
-using System.Timers;
-
-namespace LogReader
+﻿namespace LogReader
 {
-    public class LogTail
+    using System;
+    using System.IO;
+    using System.Threading;
+
+    public class LogTail : IDisposable
     {
         /// <summary>
-        /// Delegate containing a line string
-        /// </summary>
-        /// <param name="line"></param>
-        public delegate void OutputLineHandler(string line);
-
-        /// <summary>
-        /// Opens our file
-        /// </summary>
-        private readonly FileStream fileStream;
-
-        /// <summary>
-        /// Timer to read the log file.
-        /// </summary>
-        private readonly Timer readTimer;
-
-        /// <summary>
-        /// Reads the lines from our fileStream
+        ///     Reads the lines from our fileStream
         /// </summary>
         private readonly StreamReader streamReader;
 
         /// <summary>
-        /// Constructor to open a filestream with read access to a file while allowing the log to still be written
+        ///     Constructor to use a file and seek to the end of that file to start reading the tail of a file.
         /// </summary>
-        /// <param name="logPath"></param>
+        /// <param name="logPath">The path the the file you wish to open.</param>
         public LogTail(string logPath)
+            : this(new FileStream(logPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
         {
-            try
+        }
+
+        /// <summary>
+        ///     Constructor to use a fileStream and seek to the end of that file stream to start reading the tail of a file.
+        /// </summary>
+        /// <param name="fileStream"></param>
+        public LogTail(FileStream fileStream)
+        {
+            // Seek to the end of the file
+            fileStream.Seek(0, SeekOrigin.End);
+
+            // Open the stream reader...
+            this.streamReader = new StreamReader(fileStream);
+        }
+
+        /// <summary>
+        ///     Event to fire a line string back to the main form class
+        /// </summary>
+        public event Action<string> OutputLine = delegate { };
+
+        /// <summary>
+        ///     Is the log file currently being read line by line
+        /// </summary>
+        public bool IsReading { get; private set; }
+
+        /// <summary>
+        ///     Dispose of the object.
+        /// </summary>
+        public void Dispose()
+        {
+            if (this.streamReader != null)
             {
-                this.readTimer = new Timer(250);
-
-                // Open the file stream...
-                this.fileStream = new FileStream(logPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-
-                // Seek to the end of the file
-                this.fileStream.Seek(0, SeekOrigin.End);
-
-                // Open the stream reader...
-                this.streamReader = new StreamReader(this.fileStream);
-
-                // Get to the end of the log file... (Old way of seeking the end of the file)
-                //this.streamReader.ReadToEnd();
-
-                this.IsReading = false;
-
-                this.readTimer.Elapsed += this.ReadTimerElapsed;
-                this.readTimer.Start();
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine(ex.Message);
+                this.streamReader.Close();
+                this.streamReader.Dispose();
             }
         }
 
         /// <summary>
-        /// Is the log file currently being read line by line
+        ///     Start the log tail.
         /// </summary>
-        private bool IsReading { get; set; }
+        public void Start()
+        {
+            ThreadPool.QueueUserWorkItem(
+                delegate
+                    {
+                        // If we are not currently reading...
+                        if (!this.IsReading)
+                        {
+                            // Set the flag that we are reading
+                            this.IsReading = true;
+
+                            // While we are allowed to read...
+                            while (this.IsReading)
+                            {
+                                while (!this.streamReader.EndOfStream && this.IsReading)
+                                {
+                                    this.OutputLine?.Invoke(this.streamReader.ReadLine());
+                                }
+
+                                while (this.streamReader.EndOfStream && this.IsReading)
+                                {
+                                    Thread.Sleep(100);
+                                }
+                            }
+                        }
+                    });
+        }
 
         /// <summary>
-        /// Read the log file.
+        ///     Stop the log tail.
         /// </summary>
-        /// <param name="sender"></param>
-        /// <param name="e"></param>
-        private void ReadTimerElapsed(object sender, ElapsedEventArgs e)
+        public void Stop()
         {
-            // If we are already reading the lines in the file...
-            if (this.IsReading)
-            {
-                // Return so we don't double read.
-                return;
-            }
-
-            string line = string.Empty;
-
-            // While we are not at the end of the file...
-            while ((line = this.streamReader.ReadLine()) != null)
-            {
-                // Send the line back to the main form
-                this.OutputLine(line);
-            }
-
-            // We're done reading.  So set the flag so we can read again.
             this.IsReading = false;
         }
-
-        /// <summary>
-        /// Event to fire a line string back to the main form class
-        /// </summary>
-        public event OutputLineHandler OutputLine;
     }
 }
